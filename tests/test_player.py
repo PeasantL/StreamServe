@@ -87,22 +87,23 @@ def test_a_lone_video_has_no_neighbours(app_env):
 # --- the player page ----------------------------------------------------------------
 
 
-def test_the_player_offers_both_neighbour_links(client, library):
+def test_player_shows_back_without_neighbour_controls(client, library):
     test_client, _ = client
 
     response = test_client.get("/play/b")
 
     assert response.status_code == 200
-    assert "/play/c" in response.text
-    assert "/play/a" in response.text
+    assert 'id="back-button"' in response.text
+    assert 'id="prev-button"' not in response.text
+    assert 'id="next-button"' not in response.text
 
 
-def test_neighbour_links_carry_the_filter(client, library):
+def test_back_link_carries_the_filter(client, library):
     test_client, _ = client
 
     response = test_client.get("/play/c?tag=odd&sort=newest")
 
-    assert "tag=odd" in response.text
+    assert 'data-back-url="/?sort=newest&amp;tag=odd"' in response.text
 
 
 def test_the_player_falls_back_to_the_default_sort(client, library):
