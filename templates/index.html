@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" sizes="32x32" href="/static/icon-32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/static/icon-180.png">
-    <title>Video Catalogue</title>
+    <title>StreamServe</title>
     <style>
         body {
             display: flex;
@@ -240,6 +240,7 @@
             outline-offset: 2px;
         }
     </style>
+    <link rel="stylesheet" href="/static/front.css">
 </head>
 <body>
     {# Defined before anything uses it: Jinja renders top to bottom, so a macro
@@ -251,12 +252,37 @@
     {# Folder names come from the filesystem. They are passed through data
        attributes rather than an inline onclick handler, because HTML escaping
        does not make a value safe inside a JavaScript string. #}
-    <div class="toolbar">
-        <button type="button" class="folder-button current" disabled>{{ current_folder }}</button>
-        {% for folder in sibling_folders %}
-        <button type="button" class="folder-button" data-folder="{{ folder }}">{{ folder }}</button>
-        {% endfor %}
+    <header class="chrome">
+        <h1><a href="/">StreamServe</a></h1>
+        <nav class="folders" aria-label="Video folders">
+            <button type="button" class="folder-button current" disabled>{{ current_folder }}</button>
+            {% for folder in sibling_folders %}
+            <button type="button" class="folder-button" data-folder="{{ folder }}">{{ folder }}</button>
+            {% endfor %}
+        </nav>
+        <div class="header-actions">
+            <button type="button" id="rescanButton" class="header-button">Rescan</button>
+            {% if auth_enabled %}<button type="button" id="logoutButton" class="header-button">Sign out</button>{% endif %}
+            <button type="button" id="drawerButton" class="header-button primary" aria-controls="downloadDrawer" aria-expanded="false">Downloads <span id="activeCount" hidden></span></button>
+        </div>
+    </header>
 
+    <div class="scrim" id="drawerScrim" hidden></div>
+    <aside class="drawer" id="downloadDrawer" aria-labelledby="drawerTitle" aria-hidden="true" inert>
+        <div class="drawer-header"><h2 id="drawerTitle">Downloads</h2><button type="button" id="drawerClose" class="close-button" aria-label="Close downloads">&times;</button></div>
+        <div class="download-form">
+            <label for="videoUrl">Video URL or booru post page</label>
+            <input type="text" id="videoUrl" class="url-input" placeholder="Paste a video URL" inputmode="url" autocomplete="off">
+            <button type="button" id="downloadButton" class="download-button">Download</button>
+        </div>
+        <div class="status" id="status" role="status" data-scan-task="{{ scan_task_id or '' }}"></div>
+        <div class="drawer-section-title">Recent activity</div>
+        <p class="tray-empty" id="trayEmpty">Nothing has run recently.</p>
+        <div class="tray" id="tray" aria-live="polite"></div>
+    </aside>
+
+    <main>
+    <div class="toolbar">
         <select id="sortDropdown" class="sort-dropdown" aria-label="Sort videos">
           <option value="newest" {% if current_sort == "newest" %}selected{% endif %}>Sort by Newest</option>
           <option value="most_viewed" {% if current_sort == "most_viewed" %}selected{% endif %}>Sort by Most Viewed</option>
@@ -276,17 +302,9 @@
         </form>
 
         {% if is_filtered %}
-        <a href="/?sort={{ current_sort }}"><button type="button" class="clear-button">Clear filters</button></a>
+        <a href="/?sort={{ current_sort }}" class="clear-button">Clear filters</a>
         {% endif %}
 
-        <input type="text" id="videoUrl" class="url-input" placeholder="Video URL or booru post page">
-        <button type="button" id="downloadButton" class="download-button">Download</button>
-
-        <button type="button" id="rescanButton" class="clear-button">Rescan</button>
-
-        {% if auth_enabled %}
-        <button type="button" id="logoutButton" class="clear-button">Sign out</button>
-        {% endif %}
     </div>
 
     {# Selected tags first so the active filter is always visible, even when it
@@ -307,34 +325,29 @@
     </div>
     {% endif %}
 
-    <div class="status" id="status" role="status" data-scan-task="{{ scan_task_id or '' }}"></div>
-
-    {# Every job this server is running, not just the one this tab started. #}
-    <div class="tray" id="tray" aria-live="polite"></div>
-
     <div class="container" id="videoContainer">
         {% for video in video_files %}
         <div class="video-box{% if not video.has_audio %} no-audio{% endif %}">
-            {# The player is given the grid's sort and filter so its next and
-               previous steps follow what the user is actually looking at. #}
             <a href="/play/{{ video.id }}?{{ view_context() }}"
                title="{{ video.title }}{% if video.size_label %} ({{ video.size_label }}){% endif %}">
-                {% if video.thumbnail %}
-                <img src="{{ video.thumbnail }}?t={{ timestamp }}" class="thumbnail"
-                     alt="{{ video.title }}" loading="lazy" decoding="async">
-                {% else %}
-                <span class="thumbnail-missing">No thumbnail</span>
-                {% endif %}
+                <div class="video-media">
+                    {% if video.thumbnail %}
+                    <img src="{{ video.thumbnail }}?t={{ timestamp }}" class="thumbnail"
+                         alt="" loading="lazy" decoding="async">
+                    {% else %}
+                    <span class="thumbnail-missing">No thumbnail</span>
+                    {% endif %}
+                    {% if video.duration_label or video.resolution_label or video.views_label %}
+                    <div class="badges">
+                        {% if video.duration_label %}<span class="badge">{{ video.duration_label }}</span>{% endif %}
+                        {% if video.resolution_label %}<span class="badge">{{ video.resolution_label }}</span>{% endif %}
+                        {% if video.views_label %}<span class="badge">{{ video.views_label }}</span>{% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="video-name">{{ video.title }}</div>
+                {% if video.size_label %}<div class="video-sub">{{ video.size_label }}</div>{% endif %}
             </a>
-            {# Overlaid on the thumbnail rather than given their own row, so
-               adding them does not change the grid's tile geometry. #}
-            {% if video.duration_label or video.resolution_label or video.views_label %}
-            <div class="badges">
-                {% if video.duration_label %}<span class="badge">{{ video.duration_label }}</span>{% endif %}
-                {% if video.resolution_label %}<span class="badge">{{ video.resolution_label }}</span>{% endif %}
-                {% if video.views_label %}<span class="badge">{{ video.views_label }}</span>{% endif %}
-            </div>
-            {% endif %}
         </div>
         {% endfor %}
     </div>
@@ -347,11 +360,11 @@
     <nav class="pagination" aria-label="Catalogue pages">
         {% if page.has_previous %}
         <a href="{{ page_link(page.page - 1) }}" rel="prev">&larr; Previous</a>
-        {% endif %}
+        {% else %}<span></span>{% endif %}
         <span>{{ page.first_index }}&ndash;{{ page.last_index }} of {{ page.total }}</span>
         {% if page.has_next %}
         <a href="{{ page_link(page.page + 1) }}" rel="next">Next &rarr;</a>
-        {% endif %}
+        {% else %}<span></span>{% endif %}
     </nav>
     {% endif %}
 
@@ -365,11 +378,37 @@
     </p>
     {% endif %}
 
+    </main>
+
     <script>
         (function () {
             const statusEl = document.getElementById('status');
             const downloadButton = document.getElementById('downloadButton');
             const urlInput = document.getElementById('videoUrl');
+            const drawer = document.getElementById('downloadDrawer');
+            const drawerButton = document.getElementById('drawerButton');
+            const drawerClose = document.getElementById('drawerClose');
+            const scrim = document.getElementById('drawerScrim');
+            const trayEmpty = document.getElementById('trayEmpty');
+            const activeCount = document.getElementById('activeCount');
+
+            function setDrawerOpen(open) {
+                drawer.classList.toggle('open', open);
+                drawer.setAttribute('aria-hidden', String(!open));
+                drawer.inert = !open;
+                drawerButton.setAttribute('aria-expanded', String(open));
+                scrim.hidden = !open;
+                if (open) urlInput.focus();
+                else drawerButton.focus();
+            }
+            drawerButton.addEventListener('click', () => setDrawerOpen(true));
+            drawerClose.addEventListener('click', () => setDrawerOpen(false));
+            scrim.addEventListener('click', () => setDrawerOpen(false));
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape' && drawer.classList.contains('open')) {
+                    setDrawerOpen(false);
+                }
+            });
 
             const LABELS = {
                 downloading: 'Downloading...',
@@ -587,6 +626,10 @@
                     task.active || task.finished_age < SHOW_FINISHED_FOR_SECONDS);
 
                 tray.replaceChildren(...visible.map(renderJob));
+                trayEmpty.hidden = visible.length > 0;
+                const running = visible.filter((task) => task.active).length;
+                activeCount.hidden = running === 0;
+                activeCount.textContent = running;
 
                 // Something finished since the last poll. If this tab is not
                 // the one driving a download, its grid is now stale.
