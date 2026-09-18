@@ -106,16 +106,35 @@ def get_unique_filename(original_filename: str, directory: Path) -> str:
 def get_sibling_folders(directory: Path | None = None) -> list[str]:
     """Names of the directories offered as switchable libraries."""
     directory = Path(directory or current_dir())
-    parent = settings.parent_dir
+    parent = settings.parent_dir.resolve()
     try:
         return sorted(
             child.name
             for child in parent.iterdir()
-            if child.is_dir() and child.resolve() != directory.resolve()
+            if child.is_dir()
+            and not child.is_symlink()
+            and child.resolve().parent == parent
+            and child.resolve() != directory.resolve()
         )
     except OSError as exc:
         log.warning("Cannot list sibling folders of %s: %s", parent, exc)
         return []
+
+
+def library_dir(folder: str | None = None) -> Path:
+    """Resolve a named library to a real direct child of the media parent."""
+    if folder is None:
+        return current_dir()
+    if not folder or folder in (".", "..") or Path(folder).name != folder:
+        raise UnsafePathError("Invalid folder name")
+    parent = settings.parent_dir.resolve()
+    child = parent / folder
+    if child.is_symlink() or not child.is_dir():
+        raise UnsafePathError("Folder not found")
+    resolved = child.resolve()
+    if resolved.parent != parent:
+        raise UnsafePathError("Folder is outside the library parent")
+    return resolved
 
 
 # --- subtitles ---------------------------------------------------------------

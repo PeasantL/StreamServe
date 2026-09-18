@@ -47,26 +47,51 @@ log = logging.getLogger("streamserve")
 MIME_TYPES = {".mp4": "video/mp4", ".webm": "video/webm"}
 STREAM_CHUNK_SIZE = 1024 * 1024
 
-# Serialises library scans so a directory switch cannot start a second scan
-# while the first is still transcoding.
+# Scans are serialised because conversion and catalogue changes share files.
+# A request for the same folder reuses the task already waiting or running.
 _scan_lock = threading.Lock()
+_scan_tasks_lock = threading.Lock()
+_scan_tasks: dict[Path, str] = {}
 
 
 def _run_scan(task_id: str, directory: Path) -> None:
     """Scan a library in a worker thread, reporting through the task registry."""
-    if not _scan_lock.acquire(blocking=False):
-        registry.update(task_id, status="failed", error="A library scan is already running")
-        return
     try:
-        registry.update(task_id, status="scanning", progress=10)
-        result = utils.scan_library(directory)
-        registry.update(task_id, status="completed", progress=100, error=None)
-        log.info("Scan of %s finished: %s", directory, result)
+        with _scan_lock:
+            registry.update(task_id, status="scanning", progress=10)
+            result = utils.scan_library(directory)
+            registry.update(task_id, status="completed", progress=100, error=None)
+            log.info("Scan of %s finished: %s", directory, result)
     except Exception as exc:  # noqa: BLE001 - surfaced to the client
         log.exception("Library scan of %s failed", directory)
         registry.update(task_id, status="failed", error=str(exc))
     finally:
-        _scan_lock.release()
+        with _scan_tasks_lock:
+            if _scan_tasks.get(directory) == task_id:
+                del _scan_tasks[directory]
+
+
+def _schedule_scan(directory: Path) -> str:
+    with _scan_tasks_lock:
+        existing = _scan_tasks.get(directory)
+        if existing is not None:
+            return existing
+        task_id = registry.create("scan")
+        registry.update(task_id, status="queued")
+        _scan_tasks[directory] = task_id
+        try:
+            threading.Thread(target=_run_scan, args=(task_id, directory), daemon=True).start()
+        except RuntimeError:
+            # Selection has already been saved. Report a failed scan task but
+            # still let the client navigate to its selected folder.
+            del _scan_tasks[directory]
+            registry.update(task_id, status="failed", error="Could not start scan")
+        return task_id
+
+
+def _scan_task_for(directory: Path) -> str | None:
+    with _scan_tasks_lock:
+        return _scan_tasks.get(directory)
 
 
 @asynccontextmanager
@@ -76,11 +101,7 @@ async def lifespan(app: FastAPI):
 
     # Transcoding on the event loop would stall every in-flight stream, so the
     # initial scan runs on a worker thread and the server starts serving now.
-    task_id = registry.create("scan")
-    app.state.startup_scan = task_id
-    threading.Thread(
-        target=_run_scan, args=(task_id, database.current_dir()), daemon=True
-    ).start()
+    _schedule_scan(database.current_dir())
 
     yield
 
@@ -104,8 +125,15 @@ templates = Jinja2Templates(directory="templates")
 templates.env.undefined = StrictUndefined
 
 
-def _get_video_or_404(video_id: str) -> dict[str, Any]:
-    video = database.get_video_by_id(video_id)
+def _library_or_404(folder: str | None) -> Path:
+    try:
+        return utils.library_dir(folder)
+    except (utils.UnsafePathError, OSError):
+        raise HTTPException(status_code=404, detail="Folder not found") from None
+
+
+def _get_video_or_404(video_id: str, directory: Path | None = None) -> dict[str, Any]:
+    video = database.get_video_by_id(video_id, directory)
     if not video:
         raise HTTPException(status_code=404, detail=f"Video with ID '{video_id}' not found.")
     return video
@@ -139,6 +167,7 @@ async def index(
     q: str = Query(default="", max_length=200),
     tag: Annotated[list[str] | None, Query()] = None,
     page: int = Query(default=1, ge=1),
+    folder: str | None = Query(default=None),
 ):
     """The catalogue grid.
 
@@ -161,7 +190,7 @@ async def index(
         if len(selected_tags) >= MAX_TAG_CHIPS:
             break
 
-    directory = database.current_dir()
+    directory = _library_or_404(folder)
     results = utils.browse_videos(
         sort_by=sort, directory=directory, query=query, tags=selected_tags, page=page
     )
@@ -175,13 +204,14 @@ async def index(
             "timestamp": int(datetime.datetime.now().timestamp()),
             "sibling_folders": utils.get_sibling_folders(directory),
             "current_folder": directory.name,
+            "folder": directory.name,
             "current_sort": sort,
             "current_query": query,
             "selected_tags": selected_tags,
             "available_tags": utils.collect_tags(directory)[:MAX_TAG_CHIPS],
             "is_filtered": bool(query or selected_tags),
             "auth_enabled": auth.is_enabled(),
-            "scan_task_id": getattr(app.state, "startup_scan", None),
+            "scan_task_id": _scan_task_for(directory),
         },
     )
 
@@ -193,9 +223,11 @@ async def play_video(
     sort: str = Query(default="newest"),
     q: str = Query(default="", max_length=200),
     tag: Annotated[list[str] | None, Query()] = None,
+    folder: str | None = Query(default=None),
 ):
     """The player, with a back link to the current catalogue view."""
-    video = _get_video_or_404(video_id)
+    directory = _library_or_404(folder)
+    video = _get_video_or_404(video_id, directory)
     if sort not in SORT_OPTIONS:
         sort = "newest"
 
@@ -203,11 +235,12 @@ async def play_video(
     selected_tags = [value.strip().casefold() for value in (tag or []) if value.strip()]
 
     # Opening the player counts as a view; video range requests do not.
-    database.record_view(video_id)
+    database.record_view(video_id, directory)
 
     # The back link keeps the catalogue's sort and filters.
     context = urlencode(
-        [("sort", sort)] + ([("q", query)] if query else [])
+        [("sort", sort), ("folder", directory.name)]
+        + ([("q", query)] if query else [])
         + [("tag", value) for value in selected_tags]
     )
 
@@ -216,6 +249,7 @@ async def play_video(
         "play_mp4.html",
         {
             "video_id": video_id,
+            "folder": directory.name,
             "video_title": video.get("title", ""),
             "video_description": video.get("description", ""),
             "video_tags": video.get("tags", []),
@@ -284,9 +318,13 @@ async def logout():
 
 
 @app.get("/videos/{video_id}")
-async def stream_video(video_id: str, range: str | None = Header(default=None)):
+async def stream_video(
+    video_id: str,
+    range: str | None = Header(default=None),
+    folder: str | None = Query(default=None),
+):
     """Serve a video, honouring byte ranges so clients can seek."""
-    video = _get_video_or_404(video_id)
+    video = _get_video_or_404(video_id, _library_or_404(folder))
     path = _resolved_video_path(video)
 
     file_size = path.stat().st_size
@@ -330,14 +368,14 @@ async def stream_video(video_id: str, range: str | None = Header(default=None)):
 
 
 @app.get("/videos/{video_id}/subtitles")
-async def video_subtitles(video_id: str):
+async def video_subtitles(video_id: str, folder: str | None = Query(default=None)):
     """A sidecar subtitle track, served as WebVTT.
 
     SubRip is what people have on disk and WebVTT is the only thing a browser
     will accept through <track>, so the conversion happens here rather than
     asking anyone to convert their files.
     """
-    video = _get_video_or_404(video_id)
+    video = _get_video_or_404(video_id, _library_or_404(folder))
     path = utils.subtitle_path(video)
     if path is None:
         raise HTTPException(status_code=404, detail="No subtitles for this video.")
@@ -365,31 +403,20 @@ class ChangeDirectoryRequest(BaseModel):
 async def change_directory(payload: ChangeDirectoryRequest):
     """Switch to a sibling library.
 
-    Only names the server itself offered are accepted. Joining an arbitrary
-    string onto the parent path is what let ``{"folder": "/etc"}`` repoint the
-    whole application: both pathlib and os.path.join discard the left operand
-    when the right one is absolute.
+    Only real direct children of the configured parent are accepted. Joining
+    an arbitrary path would let an absolute name repoint the application.
     """
-    directory = database.current_dir()
-    if payload.folder not in utils.get_sibling_folders(directory):
-        raise HTTPException(status_code=404, detail="Folder not found")
-
-    try:
-        target = utils.resolve_within(settings.parent_dir, payload.folder)
-    except utils.UnsafePathError:
-        raise HTTPException(status_code=404, detail="Folder not found") from None
-
-    if not target.is_dir():
-        raise HTTPException(status_code=404, detail="Folder not found")
-
+    target = _library_or_404(payload.folder)
+    # This remains the saved default for old URLs and a fresh visit to `/`.
+    # Requests from a page carry their own folder, so other tabs stay stable.
     database.set_current_dir(target)
-
-    # Scanning can transcode; it must not run on the event loop.
-    task_id = registry.create("scan")
-    app.state.startup_scan = task_id
-    threading.Thread(target=_run_scan, args=(task_id, target), daemon=True).start()
-
-    return {"message": f"Directory changed to {payload.folder}", "task_id": task_id}
+    task_id = _schedule_scan(target)
+    return {
+        "message": f"Directory changed to {payload.folder}",
+        "folder": target.name,
+        "url": f"/?{urlencode({'folder': target.name})}",
+        "task_id": task_id,
+    }
 
 
 @app.get("/api/task-status/{task_id}")
@@ -413,17 +440,15 @@ async def list_tasks():
 
 
 @app.post("/api/scan")
-async def rescan_library():
+async def rescan_library(folder: str | None = Query(default=None)):
     """Re-scan the current folder on demand.
 
     Scanning only ever happened at startup and on a folder switch, so a file
     copied into the library while the server was running stayed invisible
     until it was restarted.
     """
-    directory = database.current_dir()
-    task_id = registry.create("scan")
-    threading.Thread(target=_run_scan, args=(task_id, directory), daemon=True).start()
-    return {"task_id": task_id}
+    directory = _library_or_404(folder)
+    return {"task_id": _schedule_scan(directory)}
 
 
 # --- downloading -------------------------------------------------------------
@@ -434,7 +459,11 @@ class DownloadRequest(BaseModel):
 
 
 @app.post("/api/download")
-async def download_video(payload: DownloadRequest, background_tasks: BackgroundTasks):
+async def download_video(
+    payload: DownloadRequest,
+    background_tasks: BackgroundTasks,
+    folder: str | None = Query(default=None),
+):
     """Accept either a direct media URL or a booru post page.
 
     A booru post is resolved here rather than inside the background task so the
@@ -443,6 +472,7 @@ async def download_video(payload: DownloadRequest, background_tasks: BackgroundT
     reading a generic failure.
     """
     url = payload.url.strip()
+    directory = _library_or_404(folder)
 
     # A tag search is a different job -- many posts, resolved in the worker
     # because the search itself is a network call -- but it comes in through
@@ -453,7 +483,7 @@ async def download_video(payload: DownloadRequest, background_tasks: BackgroundT
             process_import_task,
             task_id,
             url,
-            database.current_dir(),
+            directory,
             settings.import_limit,
         )
         return {"task_id": task_id}
@@ -490,8 +520,6 @@ async def download_video(payload: DownloadRequest, background_tasks: BackgroundT
         else:
             detail = f"URL must point at a video file ({supported})."
         raise HTTPException(status_code=400, detail=detail)
-
-    directory = database.current_dir()
 
     # The cheap half of duplicate detection, and it runs before the SSRF guard
     # on purpose: both are string comparisons against rows we already hold,
@@ -786,8 +814,13 @@ class UpdateVideoRequest(BaseModel):
 
 
 @app.post("/api/videos/{video_id}/update")
-async def update_video_metadata(video_id: str, payload: UpdateVideoRequest):
-    _get_video_or_404(video_id)
+async def update_video_metadata(
+    video_id: str,
+    payload: UpdateVideoRequest,
+    folder: str | None = Query(default=None),
+):
+    directory = _library_or_404(folder)
+    _get_video_or_404(video_id, directory)
 
     changes = payload.changes()
     if not changes:
@@ -795,17 +828,17 @@ async def update_video_metadata(video_id: str, payload: UpdateVideoRequest):
             status_code=400, detail="Provide at least one of title, description or tags."
         )
 
-    updated = database.update_video_in_db(video_id, changes)
+    updated = database.update_video_in_db(video_id, changes, directory)
     if not updated:
         raise HTTPException(status_code=500, detail="Failed to update video metadata")
     return {"detail": "Video metadata updated successfully", "video": updated}
 
 
 @app.delete("/api/videos/{video_id}")
-async def delete_video(video_id: str):
+async def delete_video(video_id: str, folder: str | None = Query(default=None)):
     """Delete a video, its thumbnail, and any archived original."""
-    video = _get_video_or_404(video_id)
-    directory = Path(video.get("directory") or database.current_dir())
+    directory = _library_or_404(folder)
+    video = _get_video_or_404(video_id, directory)
 
     try:
         utils.video_path(video).unlink(missing_ok=True)
@@ -837,9 +870,10 @@ async def delete_video(video_id: str):
 async def generate_custom_thumbnail(
     video_id: str,
     time: str = Query(default="00:00:01", description="Time in HH:MM:SS format"),
+    folder: str | None = Query(default=None),
 ):
     """Regenerate a thumbnail from the frame at *time*."""
-    video = _get_video_or_404(video_id)
+    video = _get_video_or_404(video_id, _library_or_404(folder))
     path = _resolved_video_path(video)
 
     try:

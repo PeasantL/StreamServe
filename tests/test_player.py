@@ -103,7 +103,7 @@ def test_back_link_carries_the_filter(client, library):
 
     response = test_client.get("/play/c?tag=odd&sort=newest")
 
-    assert 'data-back-url="/?sort=newest&amp;tag=odd"' in response.text
+    assert 'data-back-url="/?sort=newest&amp;folder=library&amp;tag=odd"' in response.text
 
 
 def test_the_player_falls_back_to_the_default_sort(client, library):
