@@ -246,14 +246,14 @@
     {# Defined before anything uses it: Jinja renders top to bottom, so a macro
        declared further down is simply undefined at the point of the call. #}
     {%- macro view_context() -%}
-    sort={{ current_sort }}{% if current_query %}&q={{ current_query | urlencode }}{% endif %}{% for tag in selected_tags %}&tag={{ tag | urlencode }}{% endfor %}
+    folder={{ folder | urlencode }}&sort={{ current_sort }}{% if current_query %}&q={{ current_query | urlencode }}{% endif %}{% for tag in selected_tags %}&tag={{ tag | urlencode }}{% endfor %}
     {%- endmacro %}
 
     {# Folder names come from the filesystem. They are passed through data
        attributes rather than an inline onclick handler, because HTML escaping
        does not make a value safe inside a JavaScript string. #}
     <header class="chrome">
-        <h1><a href="/">StreamServe</a></h1>
+        <h1><a href="/?folder={{ folder | urlencode }}">StreamServe</a></h1>
         <nav class="folders" aria-label="Video folders">
             <button type="button" class="folder-button current" disabled>{{ current_folder }}</button>
             {% for folder in sibling_folders %}
@@ -275,7 +275,7 @@
             <input type="text" id="videoUrl" class="url-input" placeholder="Paste a video URL" inputmode="url" autocomplete="off">
             <button type="button" id="downloadButton" class="download-button">Download</button>
         </div>
-        <div class="status" id="status" role="status" data-scan-task="{{ scan_task_id or '' }}"></div>
+        <div class="status" id="status" role="status" data-scan-task="{{ scan_task_id or '' }}" data-folder="{{ folder }}"></div>
         <div class="drawer-section-title">Recent activity</div>
         <p class="tray-empty" id="trayEmpty">Nothing has run recently.</p>
         <div class="tray" id="tray" aria-live="polite"></div>
@@ -294,6 +294,7 @@
         <form class="search-form" method="get" action="/" role="search">
             <input type="search" name="q" class="url-input" value="{{ current_query }}"
                    placeholder="Search titles, descriptions, tags" aria-label="Search videos">
+            <input type="hidden" name="folder" value="{{ folder }}">
             <input type="hidden" name="sort" value="{{ current_sort }}">
             {% for tag in selected_tags %}
             <input type="hidden" name="tag" value="{{ tag }}">
@@ -302,7 +303,7 @@
         </form>
 
         {% if is_filtered %}
-        <a href="/?sort={{ current_sort }}" class="clear-button">Clear filters</a>
+        <a href="/?folder={{ folder | urlencode }}&sort={{ current_sort }}" class="clear-button">Clear filters</a>
         {% endif %}
 
     </div>
@@ -313,7 +314,7 @@
     <div class="tag-bar">
         {% for tag in selected_tags %}
         <a class="tag-chip selected"
-           href="/?sort={{ current_sort }}{% if current_query %}&q={{ current_query | urlencode }}{% endif %}{% for other in selected_tags if other != tag %}&tag={{ other | urlencode }}{% endfor %}"
+           href="/?folder={{ folder | urlencode }}&sort={{ current_sort }}{% if current_query %}&q={{ current_query | urlencode }}{% endif %}{% for other in selected_tags if other != tag %}&tag={{ other | urlencode }}{% endfor %}"
            title="Remove this tag">{{ tag }} &times;</a>{# built inline: this link is the context minus one tag #}
         {% endfor %}
         {% for tag, count in available_tags %}
@@ -391,6 +392,8 @@
             const scrim = document.getElementById('drawerScrim');
             const trayEmpty = document.getElementById('trayEmpty');
             const activeCount = document.getElementById('activeCount');
+            const folderName = statusEl.dataset.folder;
+            const folderQuery = `folder=${encodeURIComponent(folderName)}`;
 
             function setDrawerOpen(open) {
                 drawer.classList.toggle('open', open);
@@ -411,6 +414,7 @@
             });
 
             const LABELS = {
+                queued: 'Waiting to scan...',
                 downloading: 'Downloading...',
                 converting: 'Converting...',
                 generating_thumbnail: 'Creating thumbnail...',
@@ -448,8 +452,11 @@
                 throw new Error('Timed out waiting for the job to finish.');
             }
 
-            document.querySelectorAll('.folder-button[data-folder]').forEach((button) => {
+            const folderButtons = document.querySelectorAll('.folder-button[data-folder]');
+            folderButtons.forEach((button) => {
                 button.addEventListener('click', async () => {
+                    folderButtons.forEach((item) => { item.disabled = true; });
+                    statusEl.textContent = 'Opening folder...';
                     try {
                         const response = await fetch('/api/change-directory', {
                             method: 'POST',
@@ -460,11 +467,10 @@
                             const problem = await response.json().catch(() => ({}));
                             throw new Error(problem.detail || 'Could not switch folder.');
                         }
-                        const { task_id: taskId } = await response.json();
-                        statusEl.textContent = 'Scanning new folder...';
-                        await pollTask(taskId, () => {});
-                        window.location.href = '/';
+                        const { url } = await response.json();
+                        window.location.href = url;
                     } catch (error) {
+                        folderButtons.forEach((item) => { item.disabled = false; });
                         statusEl.textContent = '';
                         alert(error.message);
                     }
@@ -492,7 +498,7 @@
                 downloadButton.textContent = 'Starting...';
 
                 try {
-                    const response = await fetch('/api/download', {
+                    const response = await fetch(`/api/download?${folderQuery}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ url: videoUrl })
@@ -513,7 +519,7 @@
                     if (finished && finished.detail) {
                         alert(finished.detail);
                     }
-                    window.location.href = '/';
+                    window.location.href = `/?${folderQuery}`;
                 } catch (error) {
                     alert(error.message);
                 } finally {
@@ -527,7 +533,7 @@
                 const button = event.currentTarget;
                 button.disabled = true;
                 try {
-                    const response = await fetch('/api/scan', { method: 'POST' });
+                    const response = await fetch(`/api/scan?${folderQuery}`, { method: 'POST' });
                     if (!response.ok) {
                         const problem = await response.json().catch(() => ({}));
                         throw new Error(problem.detail || 'Could not start a scan.');
@@ -650,13 +656,16 @@
                 pollTask(scanTask, (task) => {
                     statusEl.textContent = LABELS[task.status] || '';
                 })
-                    .then((task) => {
-                        if (task && document.querySelectorAll('.video-box').length === 0) {
+                    .then(() => {
+                        // A completed scan can be reported on a later page load.
+                        // Remember this task so an empty folder cannot reload forever.
+                        if (sessionStorage.getItem('lastScanReload') !== scanTask) {
+                            sessionStorage.setItem('lastScanReload', scanTask);
                             window.location.reload();
                         }
                         statusEl.textContent = '';
                     })
-                    .catch(() => { statusEl.textContent = ''; });
+                    .catch((error) => { statusEl.textContent = error.message; });
             }
         })();
     </script>

@@ -166,9 +166,12 @@ def current_dir() -> Path:
 
 def set_current_dir(path: Path) -> None:
     with _lock:
+        global _cache
         db = load_db()
-        db["current_dir"] = str(Path(path).resolve())
-        save_db()
+        updated = {**db, "current_dir": str(Path(path).resolve())}
+        # Publish the selection only after it is durable on disk.
+        _write_to_disk(updated)
+        _cache = updated
 
 
 # --- video rows --------------------------------------------------------------

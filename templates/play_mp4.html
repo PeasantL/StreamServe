@@ -52,11 +52,11 @@
     <div class="video-container">
         <video id="my-video" controls preload="metadata" loop playsinline
                {% if has_subtitles %}crossorigin="anonymous"{% endif %}>
-            <source src="/videos/{{ video_id }}" type="video/mp4">
+            <source src="/videos/{{ video_id }}?folder={{ folder | urlencode }}" type="video/mp4">
             {% if has_subtitles %}
             {# Served as WebVTT whatever the sidecar file on disk actually is. #}
             <track kind="subtitles" label="Subtitles" srclang="en" default
-                   src="/videos/{{ video_id }}/subtitles">
+                   src="/videos/{{ video_id }}/subtitles?folder={{ folder | urlencode }}">
             {% endif %}
             Your browser does not support the video tag.
         </video>
@@ -129,7 +129,7 @@
                   const timecode = `${pad(Math.floor(seconds / 3600))}:${pad(Math.floor((seconds % 3600) / 60))}:${pad(seconds % 60)}`;
 
                   const response = await fetch(
-                      `/api/videos/${encodeURIComponent(videoId)}/thumbnail?time=${encodeURIComponent(timecode)}`,
+                      `/api/videos/${encodeURIComponent(videoId)}/thumbnail?time=${encodeURIComponent(timecode)}&folder=${encodeURIComponent(document.querySelector('.header').dataset.folder)}`,
                       { method: 'POST' }
                   );
                   if (!response.ok) {

@@ -26,7 +26,9 @@ docker compose up -d
 Open <http://localhost:6969>.
 
 `PARENT_DIRECTORY` is the directory that *contains* your video folders; the
-buttons across the top of the page switch between its subdirectories.
+buttons across the top of the page switch between its direct subdirectories.
+Each page keeps its folder in `?folder=`, so switching in one tab does not move
+an open player, download, or edit in another tab to a different library.
 
 ## Running directly
 
@@ -69,8 +71,8 @@ Values resolve highest-precedence first: environment variable, then
 | — | `PARENT_DIR` | parent of `video_dir` | Directory whose subfolders are offered as switchable libraries. |
 | — | `CONFIG_FILE` | `config.json` | Path to the config file itself. |
 
-`config.json` is never written back to. The folder you are currently browsing is
-runtime state and is stored in the database file instead.
+`config.json` is never written back to. The last selected folder is saved in
+the database file and used when a URL omits `folder`.
 
 ### About `trusted_proxies`
 
@@ -93,9 +95,11 @@ view. The toolbar sorts by newest or most viewed, and filters two ways:
 Both are query parameters, so a filtered view is a URL you can bookmark or
 share. Sorting, paging and opening a video all preserve the active filter.
 
-**Rescan** re-reads the current folder, for files copied in while the server
-was running. The tray in the corner shows every job this server is running —
-downloads, imports and scans — including ones started in another tab.
+**Rescan** re-reads the folder shown on the page, for files copied in while the
+server was running. If a scan is already running, another folder's scan waits;
+a repeat request for the same folder uses its existing task. The tray in the
+corner shows every job this server is running — downloads, imports and scans —
+including ones started in another tab.
 
 ### Playing
 

@@ -5,6 +5,7 @@
    pre-filled without a second request. #}
 <header class="header chrome"
      data-video-id="{{ video_id }}"
+     data-folder="{{ folder }}"
      data-title="{{ video_title }}"
      data-description="{{ video_description }}"
      data-tags="{{ video_tags | join(', ') }}"
@@ -47,6 +48,7 @@
     (function () {
         const header = document.querySelector('.header');
         const videoId = header.dataset.videoId;
+        const folderQuery = `folder=${encodeURIComponent(header.dataset.folder)}`;
 
         const modal = document.getElementById('edit-modal');
         const titleInput = document.getElementById('edit-title');
@@ -113,7 +115,7 @@
 
             saveButton.disabled = true;
             try {
-                const response = await fetch(`/api/videos/${encodeURIComponent(videoId)}/update`, {
+                const response = await fetch(`/api/videos/${encodeURIComponent(videoId)}/update?${folderQuery}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -135,7 +137,7 @@
                 return;
             }
             try {
-                const response = await fetch(`/api/videos/${encodeURIComponent(videoId)}`, {
+                const response = await fetch(`/api/videos/${encodeURIComponent(videoId)}?${folderQuery}`, {
                     method: 'DELETE'
                 });
                 if (!response.ok) {
