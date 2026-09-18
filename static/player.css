@@ -1,0 +1,26 @@
+/* The player shares the catalogue palette and 42px top bar from front.css. */
+.header{width:100%;flex:0 0 auto;justify-content:space-between}
+.video-nav,.video-actions{display:flex;align-items:center;gap:4px;flex:0 0 auto}
+.video-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;font-size:13px;font-weight:600}
+.video-actions:before{content:"";width:1px;height:18px;margin:0 6px;background:var(--muted);opacity:.3}
+.header .header-button{cursor:pointer}
+.header .header-button:disabled{opacity:.4;cursor:default}
+.header .header-button.danger{color:#ff8f8f}
+.header .header-button.danger:hover{color:#ffaaaa;border-color:rgba(255,143,143,.45)}
+.modal-backdrop{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(0,0,0,.7)}
+.modal{box-sizing:border-box;width:100%;max-width:480px;max-height:90vh;overflow-y:auto;padding:20px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.modal h2{margin:0 0 15px;font-size:18px;font-weight:600}
+.modal label{display:block;margin:12px 0 4px;color:var(--muted);font-size:13px}
+.modal .hint{color:var(--muted)}
+.modal input,.modal textarea{box-sizing:border-box;width:100%;padding:8px 11px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit;font-size:15px;resize:vertical}
+.modal input:focus,.modal textarea:focus{border-color:var(--accent);outline:none}
+.modal-error{min-height:1.2em;margin-top:10px;color:#ff8f8f;font-size:13px}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+.dialog-button{padding:7px 12px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--muted);font-size:13px;cursor:pointer}
+.dialog-button:hover{border-color:var(--accent);color:var(--fg)}
+.dialog-button.primary{border-color:var(--accent);background:var(--accent);color:#0d1117;font-weight:600}
+.dialog-button.primary:hover{background:#8ab7fe}
+.dialog-button:disabled{opacity:.5;cursor:default}
+@media(max-width:700px){.header{gap:6px}.video-title{font-size:12px}.video-nav,.video-actions{gap:2px}.video-actions:before{margin:0 2px}.header .header-button{padding:4px 7px}}
+@media(max-width:420px){.video-title{display:none}.video-actions{margin-left:auto}}
+@media(pointer:coarse){.modal input,.modal textarea{font-size:16px}}

@@ -194,11 +194,7 @@ async def play_video(
     q: str = Query(default="", max_length=200),
     tag: Annotated[list[str] | None, Query()] = None,
 ):
-    """The player.
-
-    It takes the grid's sort and filter so that "next video" means the next
-    one the user could actually see, rather than the next row in the database.
-    """
+    """The player, with a back link to the current catalogue view."""
     video = _get_video_or_404(video_id)
     if sort not in SORT_OPTIONS:
         sort = "newest"
@@ -206,23 +202,10 @@ async def play_video(
     query = q.strip()
     selected_tags = [value.strip().casefold() for value in (tag or []) if value.strip()]
 
-    previous_id, next_id = utils.find_neighbours(
-        video_id,
-        sort_by=sort,
-        directory=database.current_dir(),
-        query=query,
-        tags=selected_tags,
-    )
-
-    # Counted after the neighbours are resolved, and not on /videos/{id}: that
-    # route is fetched once per range request, so one playback would register
-    # dozens. Opening the player is the closest thing to "watched it" we can
-    # observe -- and counting it first would reorder a most-viewed sort out
-    # from under the next and previous links the user is about to follow.
+    # Opening the player counts as a view; video range requests do not.
     database.record_view(video_id)
 
-    # Query string shared by the back link and both neighbour links, so
-    # stepping through videos never loses the filter that framed them.
+    # The back link keeps the catalogue's sort and filters.
     context = urlencode(
         [("sort", sort)] + ([("q", query)] if query else [])
         + [("tag", value) for value in selected_tags]
@@ -237,8 +220,6 @@ async def play_video(
             "video_description": video.get("description", ""),
             "video_tags": video.get("tags", []),
             "has_subtitles": utils.subtitle_path(video) is not None,
-            "previous_url": f"/play/{previous_id}?{context}" if previous_id else "",
-            "next_url": f"/play/{next_id}?{context}" if next_id else "",
             "back_url": f"/?{context}",
         },
     )
