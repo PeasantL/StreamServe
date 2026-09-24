@@ -183,6 +183,16 @@ def test_the_login_page_is_reachable_without_a_session(secured):
     assert test_client.get("/login").status_code == 200
 
 
+def test_the_web_app_manifest_is_reachable_without_a_session(secured):
+    test_client, _ = secured
+
+    response = test_client.get("/manifest.webmanifest")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/manifest+json"
+    assert [icon["sizes"] for icon in response.json()["icons"]] == ["192x192", "512x512"]
+
+
 # --- signing in ----------------------------------------------------------------------
 
 

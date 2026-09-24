@@ -895,6 +895,34 @@ async def healthz():
     return JSONResponse({"status": "ok"})
 
 
+# Installed browsers otherwise infer an icon from the 180px iOS asset. Proper
+# maskable sizes let each platform crop the full-bleed square itself instead of
+# padding an already-rounded image with white bars.
+@app.get("/manifest.webmanifest")
+async def manifest():
+    return JSONResponse(
+        {
+            "name": "StreamServe",
+            "short_name": "StreamServe",
+            "start_url": "/",
+            "scope": "/",
+            "display": "standalone",
+            "background_color": "#191919",
+            "theme_color": "#191919",
+            "icons": [
+                {
+                    "src": f"/static/icon-{size}.png?v=2",
+                    "sizes": f"{size}x{size}",
+                    "type": "image/png",
+                    "purpose": "any maskable",
+                }
+                for size in (192, 512)
+            ],
+        },
+        media_type="application/manifest+json",
+    )
+
+
 # Branding assets ship with the code, so they sit beside it rather than in a
 # configurable directory the way thumbnails do.
 app.mount(

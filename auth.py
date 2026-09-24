@@ -35,8 +35,9 @@ log = logging.getLogger(__name__)
 COOKIE_NAME = "streamserve_session"
 
 # Reachable without a session: the login form itself, the endpoint that grants
-# one, and the health check the container polls from inside its own network.
-EXEMPT_PATHS = frozenset({"/login", "/healthz"})
+# one, the metadata browsers need to install it, and the health check the
+# container polls from inside its own network.
+EXEMPT_PATHS = frozenset({"/login", "/healthz", "/manifest.webmanifest"})
 
 # The login page carries the site icon, which the browser fetches before
 # there is any session to check.

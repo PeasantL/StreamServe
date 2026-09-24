@@ -236,9 +236,11 @@ ruff check .
 pytest
 ```
 
-Branding lives in `static/`: `icon-32.png` is the tab favicon and
-`icon-180.png` the icon iOS and Android use when the page is saved to a home
-screen. `/static/` is served without a session so the login page can show it.
+Branding lives in `static/`: `icon-32.png` is the tab favicon,
+`icon-180.png` is the iOS home-screen icon, and `icon-192.png` plus
+`icon-512.png` are the maskable web-app icons advertised by the manifest.
+`/static/` and `/manifest.webmanifest` are served without a session so the
+login page can advertise them.
 
 Tests cover the Range parser, the IP allowlist and forwarded-header handling,
 path containment, the SSRF guard, booru URL and tag-search resolution, partial
